@@ -17,7 +17,7 @@ date: 2026-01-01
 Created the vault skeleton, the log validator and the pre-commit hook.
 
 ## Notes
-- Starter files copied from the setup gist.
+- Vault created from the agent-memory-vault template.
 
 ### Verification
 - `bun scripts/validate-logs.ts` → `✓ 1 logs, 0 errors`
