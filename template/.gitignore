@@ -1,0 +1,6 @@
+# Machine-local facts (shell, tool versions, install paths): different on every clone
+/SYSTEM.md
+# Attachments under personal/ stay out of git; notes are versioned
+/personal/**/*.pdf
+.obsidian/workspace*.json
+node_modules/
