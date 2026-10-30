@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [{ "type": "command", "command": "bun \"$CLAUDE_PROJECT_DIR/scripts/validate-logs.ts\" --hook" }]
+      }
+    ]
+  }
+}
