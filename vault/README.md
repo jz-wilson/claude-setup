@@ -64,22 +64,11 @@ git push -u origin main
 2. It merges the remote, never rebasing. On a real conflict it aborts the merge, leaves the tree clean with your local commits intact, and exits 1. Resolve that one by hand. If the merge would overwrite a local edit that hasn't settled yet, it prints `DEFER` and the next run retries.
 3. It pushes.
 
-Run it every 5 minutes.
-
-**Linux/macOS** (`crontab -e`):
+Run it every 5 minutes with whatever scheduler you use, for example cron (`crontab -e`):
 
 ```cron
 */5 * * * * /path/to/my-vault/scripts/vault-sync.sh /path/to/my-vault >> /tmp/vault-sync.log 2>&1
 ```
-
-**Windows** (Task Scheduler, through Git Bash; `-l` loads your profile so `bun` and your git credentials are found):
-
-```powershell
-schtasks /Create /SC MINUTE /MO 5 /TN vault-sync /TR "'C:\Program Files\Git\bin\bash.exe' -lc '/c/path/to/my-vault/scripts/vault-sync.sh /c/path/to/my-vault >> /tmp/vault-sync.log 2>&1'"
-```
-
-- `/TR` is capped at 261 characters. With a long vault path, put the call in a short wrapper script and point `/TR` at that instead.
-- A console window flashes on each run. To hide it, set the task to "Run whether user is logged on or not" in Task Scheduler.
 
 ## 4. Day to day
 
