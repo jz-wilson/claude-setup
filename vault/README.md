@@ -9,7 +9,7 @@ This folder holds only the concept and the templates. Your own vault is a separa
 - **One note format.** Every note starts with frontmatter (`updated`, `tags`, `type`) followed by `## Summary`, `## Notes` and `## Related`, so scripts and agents can parse any note the same way. See `template/_format.md`.
 - **Two kinds of memory.** *Episodic* notes are raw and dated: agent task logs and monthly decision logs. *Semantic* notes hold current, distilled facts, one note per project, machine or concept. Agents write episodic notes as they work. Afterwards the useful facts are folded into semantic notes as dated bullets, and old logs are archived.
 - **Every agent task gets a log** in `agents/<agent>/reports/`. It starts `active` and ends `completed` (or `error`, `blocked`, `awaiting-approval`). A completed log must list the checks the agent ran and what they returned. The agent sets `verified: false`; only you flip it to `true`. See `template/AGENTS.md`.
-- **Git is the safety net.** A pre-commit hook rejects malformed logs, and every change is a commit you can inspect or undo. Everything stays local; nothing needs a remote.
+- **Git is the safety net.** A pre-commit hook rejects malformed logs, and every change is a commit you can inspect or undo. Everything stays local.
 
 ## Requirements
 
@@ -71,8 +71,7 @@ Once the basics hold, these are worth adding, roughly in this order:
    - a glossary of vault terms
    - a routing contract that says where each kind of fact lives
 6. Semantic search over the notes. Exclude `personal/` and any other sensitive folder from the index, then test it: a term that appears only in a sensitive note must not come back.
-7. A remote and a sync job, once you work on more than one machine. Keep the remote **private**: the vault holds personal facts.
-8. A nightly job that runs the validators, flags notes that haven't been updated in a long time, and opens a PR with fixes instead of committing to `main`.
+7. A nightly job that runs the validators, flags notes that haven't been updated in a long time, and opens a PR with fixes instead of committing to `main`.
 
 ## Privacy rules worth writing down early
 
