@@ -4,7 +4,12 @@ How I set up and run Claude Code, written up so anyone can copy the parts they w
 
 | Guide | What it covers |
 |---|---|
-| [vault/](vault/README.md) | An agent-memory vault: a plain-Markdown git repo that Claude reads before asking you questions, with a structured log for every task it runs, a validator and pre-commit hook, and a two-way sync. Includes a ready-to-copy template |
+| [instructions/](instructions/README.md) | Layering the global instruction files: a shareable `AGENTS.md`, a private file imported only where it exists, and a starter set of working rules |
+| [hooks/](hooks/README.md) | Guard hooks that enforce the rules that matter: never print secrets, never commit after a failed step. With tests |
+| [review/](review/README.md) | The review and verification loop: an independent reviewer, a verifier per finding, a two-round cap, and a `Stop` hook that enforces it |
+| [vault/](vault/README.md) | An agent-memory vault: a plain-Markdown git repo that Claude reads before asking you questions, with a structured log for every task, a validator and a pre-commit hook. Includes a ready-to-copy template |
 | [claude-hud/](claude-hud/README.md) | The claude-hud status line on Windows with Git Bash: install, a width-aware wrapper that always runs the newest build, display settings, an offline variant |
 
-Each guide stands alone; start with whichever you need.
+Each guide stands alone. A good order for a fresh setup is instructions, then hooks, then review.
+
+Scripts need [Bun](https://bun.sh). Run every test with `bun test`.
