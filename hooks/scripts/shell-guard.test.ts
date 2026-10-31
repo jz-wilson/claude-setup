@@ -37,6 +37,26 @@ test("secret-looking env vars and bare dumps are denied", () => {
   expect(envVerdict("PowerShell", "Get-ChildItem env:")).not.toBeNull();
 });
 
+test("secret names and printers match in any case, and API counts as a secret word", () => {
+  for (const c of ["echo $token", "echo $github_token", "echo $Api_Key", "echo $OPENAI_APIKEY", "echo $STRIPE_API", "printenv db_password"])
+    expect(envVerdict("Bash", c)).not.toBeNull();
+  expect(envVerdict("PowerShell", "Write-Host $env:github_token")).not.toBeNull();
+  expect(envVerdict("PowerShell", "$token = Get-Content f; Write-Host $token")).not.toBeNull();
+  for (const c of ["echo $tokenizer", "echo $API_BASE_URL", "echo $apiary", "echo $PATH"]) expect(envVerdict("Bash", c)).toBeNull();
+});
+
+test("the wider secret vocabulary is denied, with segment words matched only as whole segments", () => {
+  for (const name of [
+    "DB_PASS", "db_pwd", "GPG_PASSPHRASE", "AWS_CREDENTIALS", "GOOGLE_CREDENTIAL", "SSH_PRIVKEY", "JWT_SIGNING_KEY",
+    "ENCRYPTION_KEY", "DEPLOY_KEY", "KEY", "GITHUB_PAT", "SENTRY_DSN", "DATABASE_URL", "MONGODB_URI",
+    "SLACK_WEBHOOK_URL", "REDIS_URL", "AZURE_CONNECTION_STRING", "BASIC_AUTH", "REGISTRY_CREDS", "ID_JWT",
+    "SESSION_COOKIE", "PASSWORD_SALT", "MFA_TOTP", "OAUTH_BEARER", "SECRET_KEY_BASE", "CI_JOB_JWT_V2", "DBPASS",
+    "AUTHORIZATION", "GITHUB_TOKEN_2", "REACT_APP_API",
+  ]) expect(envVerdict("Bash", `echo $${name}`)).not.toBeNull();
+  for (const name of ["BYPASS", "MONKEY", "PWD", "OLDPWD", "PATH", "OAUTH", "COMPASS", "HOTKEYS", "API_BASE_URL", "AUTHOR", "SITE_URL", "NODE_V18", "PASSES"])
+    expect(envVerdict("Bash", `echo $${name}`)).toBeNull();
+});
+
 test("PowerShell printers are matched in either case", () => {
   expect(envVerdict("PowerShell", "Write-Host $env:GITHUB_TOKEN")).not.toBeNull();
   expect(envVerdict("PowerShell", "Write-Output $env:DB_PASSWORD")).not.toBeNull();
@@ -47,10 +67,10 @@ test("PowerShell printers are matched in either case", () => {
 test("filtered env use passes", () => {
   for (const c of [
     '[ -n "$GITHUB_TOKEN" ] && echo set', "printenv HOME", "echo $PATH", "env FOO=1 cmd", "set -e", "export FOO=1",
-    "echo 'uses $TOKEN later'", 'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://example.com', "echo $token $tokenizer",
+    "echo 'uses $TOKEN later'", 'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://example.com', "echo $tokenizer",
     "echo $SESSIONS_DIR_COUNT", "env | grep PATH", "printenv | wc -l",
   ]) expect(envVerdict("Bash", c)).toBeNull();
-  expect(envVerdict("PowerShell", "$token = Get-Content f; Write-Host $token")).toBeNull();
+  expect(envVerdict("PowerShell", "$t = Get-Content f; Write-Host $t")).toBeNull();
   expect(envVerdict("Bash", "cat > f <<'EOF'\nuse $TOKEN here\nEOF")).toBeNull();
 });
 

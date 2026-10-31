@@ -177,15 +177,24 @@ Shells that run a string: `bash sh zsh dash pwsh powershell cmd eval iex invoke-
 
 ### Rule 2: environment
 
-`SECRET_ENV` is the case-sensitive pattern `\b[A-Z0-9_]*(PASSWORD|PASSWD|TOKEN|SECRET|SESSION|API_KEY|PRIVATE_KEY|ACCESS_KEY)\b`. Upper case only, and the secret word must end the name: `GITHUB_TOKEN`, `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY` match; `TOKEN_DIR`, `$token`, `$tokenizer`, `SESSIONS_DIR_COUNT` do not.
+`SECRET_ENV` matches a variable name, case-insensitively (flag `i`), that ends in a secret word. It is built from two word lists:
+
+| Kind | Rule | Words |
+|---|---|---|
+| Suffix words | May follow any `[A-Z0-9_]*` prefix | `PASSWORD`, `PASSWD`, `PASSPHRASE`, `DBPASS`, `DB_PASS`, `TOKEN`, `SECRET`, `SECRET_KEY_BASE`, `SESSION`, `CREDENTIAL`, `CREDENTIALS`, `PRIVKEY`, `AUTHORIZATION`, `API_KEY`, `APIKEY`, `API`, `PRIVATE_KEY`, `ACCESS_KEY`, `SIGNING_KEY`, `ENCRYPTION_KEY`, `MASTER_KEY`, `<X>_URL` / `<X>_URI` for X in `DATABASE DB MONGO MONGODB REDIS POSTGRES POSTGRESQL AMQP WEBHOOK`, `CONNECTION_STRING`, `CONN_STR` |
+| Segment words | The whole name, or after an underscore (`(?:[A-Z0-9_]*_)?WORD`) | `KEY`, `PASS`, `PWD`, `AUTH`, `CREDS`, `JWT`, `BEARER`, `COOKIE`, `PAT`, `OTP`, `TOTP`, `SALT`, `DSN` |
+
+Pattern: `\b(?!PWD\b)(?:[A-Z0-9_]*(?:<suffix words>)|(?:[A-Z0-9_]*_)?(?:<segment words>))(?:_V?\d+)?\b`, alternatives joined with `|` in the order listed, flag `i`. The secret word must end the name (the trailing `\b`), except for an optional version tag such as `_V2` or `_2`. The lookahead excludes the bare name `PWD`, the current directory.
+
+Match: `GITHUB_TOKEN`, `github_token`, `token`, `Api_Key`, `OPENAI_APIKEY`, `STRIPE_API`, `DB_PASSWORD`, `DB_PASS`, `db_pwd`, `DEPLOY_KEY`, `KEY`, `GITHUB_PAT`, `SENTRY_DSN`, `DATABASE_URL`, `MONGODB_URI`, `SLACK_WEBHOOK_URL`, `BASIC_AUTH`, `SESSION_COOKIE`, `MFA_TOTP`, `SECRET_KEY_BASE`, `CI_JOB_JWT_V2`, `DBPASS`, `AUTHORIZATION`, `REACT_APP_API` (bare `API` counts, so base-URL names ending in `_API` are denied too). No match: `tokenizer`, `API_BASE_URL`, `apiary`, `SESSIONS_DIR_COUNT`, `BYPASS`, `MONKEY`, `PWD`, `OLDPWD`, `PATH`, `OAUTH`, `COMPASS`, `HOTKEYS`, `AUTHOR`, `SITE_URL`, `NODE_V18`, `PASSES`. Segment words match after any underscore, so `CACHE_KEY` and `OLD_PWD` are denied too (printing them is rarely needed).
 
 `envVerdict` works on a cleaned copy of the command:
 
 1. Remove quoted heredoc bodies (replace with one space): the pattern is `<<` with optional `-` and spaces, a tag in matching single or double quotes, the rest of that line, then everything up to a line that is only that tag (leading spaces allowed) at a newline or the end. Unquoted heredocs are not removed. The tag is `\w+` only; the terminator line may have leading whitespace but nothing after the tag (a trailing space means it is not a terminator); the body is matched lazily up to the first such line; the match is replaced by one space. With no terminator line the pattern does not match, so nothing is removed and the body is tested as ordinary text (unlike `scan`, which would skip it).
 2. Remove single-quoted text, only outside double quotes. Walk the characters: a `"` not preceded by a backslash flips an in-double flag; a `'` outside double quotes with a later closing `'` is replaced (with the text between) by one space; an unmatched `'`, or any `'` inside double quotes, stays. So `echo "it's" $GITHUB_TOKEN "don't"` still shows the variable.
 
-**Printing test** (one regex, case-sensitive, multi-line flag), on the cleaned text. A *reference* is `$NAME`, `${NAME}`, `$env:NAME` or `%NAME%`, where NAME matches `SECRET_ENV`. Deny with `This prints a secret-looking environment variable. Test it with `[ -n "$NAME" ]` or pass it to the command that needs it.` when any of these is found:
-- one of `echo`, `printf`, `print` (lower-case only, so `Echo` does not match), or `Write-Host` / `Write-Output` in any letter case (each letter is a `[Xx]` class: `write-host`, `Write-Host` and `WRITE-HOST` all match), as a whole word; `$env:` is lower-case only, then any characters except `; & | newline`, then a reference. The reference must come after the printer and before the next separator, so `[ -n "$TOKEN" ] && echo set` passes and `curl -H "Bearer $TOKEN"` passes;
+**Printing test** (one regex, flags `mi`: multi-line and case-insensitive), on the cleaned text. A *reference* is `$NAME`, `${NAME}`, `$env:NAME` or `%NAME%`, where NAME matches `SECRET_ENV`. Deny with `This prints a secret-looking environment variable. Test it with `[ -n "$NAME" ]` or pass it to the command that needs it.` when any of these is found:
+- one of `echo`, `printf`, `print`, `write-host`, `write-output` in any letter case (`Echo`, `Write-Host`, `WRITE-HOST` all match), as a whole word, then any characters except `; & | newline`, then a reference. The reference must come after the printer and before the next separator, so `[ -n "$TOKEN" ] && echo set` passes and `curl -H "Bearer $TOKEN"` passes;
 - `printenv`, whitespace, then a secret name (`printenv AWS_SECRET_ACCESS_KEY`);
 - a lone `$env:NAME` that makes up a whole statement (line start or after `; & | newline`, then end or the next separator), which PowerShell prints.
 
@@ -196,7 +205,7 @@ Shells that run a string: `bash sh zsh dash pwsh powershell cmd eval iex invoke-
 
 Deny with `<cmd> with no filter dumps every environment variable, secrets included. Use `printenv NAME` for one harmless variable.` Otherwise `null`.
 
-Allowed examples: `env FOO=1 cmd` (has args), `set -e`, `export FOO=1`, `printenv HOME`, `echo $PATH`, `echo 'uses $TOKEN later'`, PowerShell `$token = Get-Content f; Write-Host $token`, and `cat > f <<'EOF'\nuse $TOKEN here\nEOF`.
+Allowed examples: `env FOO=1 cmd` (has args), `set -e`, `export FOO=1`, `printenv HOME`, `echo $PATH`, `echo 'uses $TOKEN later'`, PowerShell `$t = Get-Content f; Write-Host $t` (but `Write-Host $token` is denied: `token` is a secret name), and `cat > f <<'EOF'\nuse $TOKEN here\nEOF`.
 
 ### Rule 3: chaining
 
@@ -270,7 +279,7 @@ Consequences: a command with no operand reads stdin and passes (`cat`, `git log 
 | `gh auth token \| docker login … --password-stdin`, `gh auth token > token.txt` | secret | allow | piped to a consumer, redirected |
 | `git commit -m "stop running gh auth token"`, `echo 'gh auth token'`, `grep -rn 'op read' .` | secret | allow | the words are inside one quoted word |
 | `Read` tool with `gh auth token` | secret | allow | wrong tool |
-| `echo -n "$API_KEY"`, `printf "%s" "$DB_PASSWORD"`, `echo "it's" $GITHUB_TOKEN "don't"`, PowerShell `echo $env:OPENAI_API_KEY`, PowerShell `Write-Host $env:GITHUB_TOKEN` | env | deny | printer followed by a reference |
+| `echo -n "$API_KEY"`, `printf "%s" "$DB_PASSWORD"`, `echo "it's" $GITHUB_TOKEN "don't"`, PowerShell `echo $env:OPENAI_API_KEY`, PowerShell `Write-Host $env:GITHUB_TOKEN`, PowerShell `WRITE-HOST $env:github_token`, `echo $token`, `echo $STRIPE_API` | env | deny | printer followed by a reference |
 | `printenv`, `env`, `export -p`, PowerShell `Get-ChildItem env:` | env | deny | unfiltered dump |
 | `env \| grep PATH`, `printenv \| wc -l`, `env FOO=1 cmd` | env | allow | filtered or has args |
 | `cat < input.txt`, `bash -c 'cat secrets.txt'`, `echo start; cat config.json`, `cd repo && cat README.md` | read | deny | a reader with a file operand in some segment |
@@ -278,8 +287,6 @@ Consequences: a command with no operand reads stdin and passes (`cat`, `git log 
 | `echo cat file.md`, `git commit -m 'cat README.md'` | read | allow | `cat` is not the command word |
 
 ## Known limitations
-
-- PowerShell variable names are case-insensitive, but `SECRET_ENV` is upper-case only, so `Write-Host $env:github_token` is allowed.
 
 Kept as they are; a rebuild does not need to fix them, and none is tested.
 

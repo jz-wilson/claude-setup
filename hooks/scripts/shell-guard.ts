@@ -17,7 +17,24 @@ export const SECRET_COMMANDS: Record<string, string[]> = {
   gcloud: ["auth print-access-token", "secrets versions access"],
 };
 // Upper-case names that end in a secret word: GITHUB_TOKEN, DB_PASSWORD, AWS_SECRET_ACCESS_KEY (not TOKEN_DIR).
-const SECRET_ENV = /\b[A-Z0-9_]*(PASSWORD|PASSWD|TOKEN|SECRET|SESSION|API_KEY|PRIVATE_KEY|ACCESS_KEY)\b/;
+// A variable name is secret-looking when it ends in a secret word, in any letter case ($token,
+// $github_token and PowerShell's $env:github_token count). Two kinds of word:
+//  - SUFFIX words may follow anything: GITHUB_TOKEN, XTOKEN, DB_PASSWORD, SLACK_WEBHOOK_URL.
+//  - SEGMENT words must be the whole name or follow an underscore, because as bare suffixes they
+//    hit ordinary names: DB_PASS but not BYPASS, DEPLOY_KEY but not MONKEY, DB_PWD but not OLDPWD.
+//    PWD on its own is the current directory, so it is excluded.
+// A trailing version tag (_V2, _2) after the secret word still counts: CI_JOB_JWT_V2.
+const SUFFIX_WORDS = [
+  "PASSWORD", "PASSWD", "PASSPHRASE", "DB_?PASS", "TOKEN", "SECRET", "SECRET_KEY_BASE", "SESSION", "CREDENTIALS?",
+  "PRIVKEY", "AUTHORIZATION",
+  "API_?KEY", "API", "PRIVATE_KEY", "ACCESS_KEY", "SIGNING_KEY", "ENCRYPTION_KEY", "MASTER_KEY",
+  "(?:DATABASE|DB|MONGO(?:DB)?|REDIS|POSTGRES(?:QL)?|AMQP|WEBHOOK)_UR[LI]", "CONNECTION_STRING", "CONN_STR",
+];
+const SEGMENT_WORDS = ["KEY", "PASS", "PWD", "AUTH", "CREDS", "JWT", "BEARER", "COOKIE", "PAT", "T?OTP", "SALT", "DSN"];
+const SECRET_ENV = new RegExp(
+  String.raw`\b(?!PWD\b)(?:[A-Z0-9_]*(?:${SUFFIX_WORDS.join("|")})|(?:[A-Z0-9_]*_)?(?:${SEGMENT_WORDS.join("|")}))(?:_V?\d+)?\b`,
+  "i",
+);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "pwsh", "powershell", "cmd", "eval", "iex", "invoke-expression"]);
 const HINT = "Pass the value to the command that needs it without printing it, e.g. `TOKEN=$(gh auth token) some-cmd`.";
 
@@ -83,9 +100,9 @@ export function envVerdict(tool: string, command: string): string | null {
   const S = SECRET_ENV.source;
   const ref = String.raw`(\$\{?${S}|\$env:${S}|%${S}%)`;
   // Passing a secret to a command (`curl -H "Bearer $TOKEN"`) is fine; printing it is not.
-  // PowerShell cmdlet names are case-insensitive, so Write-Host/Write-Output match in any case;
-  // the rest of the pattern stays case-sensitive (secret env names are upper-case).
-  const printing = new RegExp(String.raw`\b(echo|printf|print|[Ww][Rr][Ii][Tt][Ee]-(?:[Hh][Oo][Ss][Tt]|[Oo][Uu][Tt][Pp][Uu][Tt]))\b[^;&|\n]*${ref}|\bprintenv\s+${S}|(^|[;&|\n]\s*)\$env:${S}\s*($|[;&|\n])`, "m");
+  // Case-insensitive throughout: PowerShell cmdlets and variable names ignore case, and a
+  // lower-case $token is as much a secret as $TOKEN.
+  const printing = new RegExp(String.raw`\b(echo|printf|print|write-host|write-output)\b[^;&|\n]*${ref}|\bprintenv\s+${S}|(^|[;&|\n]\s*)\$env:${S}\s*($|[;&|\n])`, "mi");
   if (printing.test(text)) {
     return "This prints a secret-looking environment variable. Test it with `[ -n \"$NAME\" ]` or pass it to the command that needs it.";
   }
