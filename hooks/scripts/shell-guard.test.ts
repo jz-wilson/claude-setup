@@ -37,6 +37,13 @@ test("secret-looking env vars and bare dumps are denied", () => {
   expect(envVerdict("PowerShell", "Get-ChildItem env:")).not.toBeNull();
 });
 
+test("PowerShell printers are matched in either case", () => {
+  expect(envVerdict("PowerShell", "Write-Host $env:GITHUB_TOKEN")).not.toBeNull();
+  expect(envVerdict("PowerShell", "Write-Output $env:DB_PASSWORD")).not.toBeNull();
+  expect(envVerdict("PowerShell", "WRITE-HOST $env:GITHUB_TOKEN")).not.toBeNull();
+  expect(envVerdict("PowerShell", "write-output $env:GITHUB_TOKEN")).not.toBeNull();
+});
+
 test("filtered env use passes", () => {
   for (const c of [
     '[ -n "$GITHUB_TOKEN" ] && echo set', "printenv HOME", "echo $PATH", "env FOO=1 cmd", "set -e", "export FOO=1",

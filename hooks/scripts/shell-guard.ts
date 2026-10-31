@@ -83,7 +83,9 @@ export function envVerdict(tool: string, command: string): string | null {
   const S = SECRET_ENV.source;
   const ref = String.raw`(\$\{?${S}|\$env:${S}|%${S}%)`;
   // Passing a secret to a command (`curl -H "Bearer $TOKEN"`) is fine; printing it is not.
-  const printing = new RegExp(String.raw`\b(echo|printf|print|write-host|write-output)\b[^;&|\n]*${ref}|\bprintenv\s+${S}|(^|[;&|\n]\s*)\$env:${S}\s*($|[;&|\n])`, "m");
+  // PowerShell cmdlet names are case-insensitive, so Write-Host/Write-Output match in any case;
+  // the rest of the pattern stays case-sensitive (secret env names are upper-case).
+  const printing = new RegExp(String.raw`\b(echo|printf|print|[Ww][Rr][Ii][Tt][Ee]-(?:[Hh][Oo][Ss][Tt]|[Oo][Uu][Tt][Pp][Uu][Tt]))\b[^;&|\n]*${ref}|\bprintenv\s+${S}|(^|[;&|\n]\s*)\$env:${S}\s*($|[;&|\n])`, "m");
   if (printing.test(text)) {
     return "This prints a secret-looking environment variable. Test it with `[ -n \"$NAME\" ]` or pass it to the command that needs it.";
   }

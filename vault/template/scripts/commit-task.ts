@@ -41,13 +41,12 @@ function truncateSubject(s: string, max = 72): string {
   return s.length <= max ? s : s.slice(0, max - 1).trimEnd() + "…";
 }
 
-/** Insert `commits:` into frontmatter (after the run fields, before model), appending to an existing list or creating a new one-entry block list. */
+/** Insert `commits:` into frontmatter, appending to an existing list or creating a new one-entry inline list. */
 export function addCommitSha(fm: string[], sha: string): string[] {
   const idx = fm.findIndex((l) => /^commits:/.test(l));
   if (idx === -1) {
-    // insert after cost_usd, else after error_class/retry_count/tokens_out chain, else after status block —
-    // simplest robust anchor: after the last of [cost_usd, tokens_out, tokens_in, retry_count, error_class,
-    // completion_signal, verified] that exists, else right after the required-fields block (after `date:`).
+    // Insert after the first of these keys that exists, in this priority order; with none of
+    // them, after the last frontmatter line.
     const anchors = ["cost_usd", "tokens_out", "tokens_in", "retry_count", "error_class", "completion_signal", "verified", "date"];
     let anchorIdx = -1;
     for (const a of anchors) {

@@ -24,7 +24,7 @@ cp -r claude-setup/vault/template my-vault
 cd my-vault
 git init -b main
 git config core.hooksPath .githooks
-bun run validate                  # logs: ✓ 1 files validated; notes: ✓ 0 files validated, ✓ links ok
+bun run validate                  # ✓ 1 files validated (logs), then ✓ 0 files validated (notes)
 git add -A && git commit -m "Vault skeleton"
 ```
 
@@ -53,7 +53,7 @@ To see the hook work, delete the `### Verification` section from the example log
 
 ### Scripts
 
-Run them from the vault root, as `bun run <name>` or `bun scripts/<file>.ts`. `capture`, `consolidate`, `search`, `commit-task` and `move` print their usage with `--help`.
+Run them from the vault root, as `bun run <name>` or `bun scripts/<file>.ts`. `capture`, `consolidate`, `search`, `commit-task` and `move` print their usage with `--help`. `template/scripts/README.md` specifies every module, CLI, validation rule and message precisely enough to rebuild the scripts, the pre-commit hook and the scaffold script from it.
 
 | Command | What it does |
 |---|---|

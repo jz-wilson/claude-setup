@@ -7,6 +7,8 @@ Mods are Claude Code plugins whose hooks module is TypeScript: they can draw UI 
 | [agent-tree](agent-tree/) | A live pane with the subagent spawn tree: who spawned whom, on which model, what each one is doing now, and what the session has spent |
 | [prompt-refiner](prompt-refiner/) | A **Refine** button under the prompt that rewrites your draft in a style you pick, shows what changed, and lets you use it, refine again or discard it |
 
+Each mod folder has its own README with a rebuild spec (API surface, state, exact strings, and the behaviour its tests pin): [agent-tree](agent-tree/README.md), [prompt-refiner](prompt-refiner/README.md).
+
 ## Install
 
 This repo is also a plugin marketplace:
@@ -27,7 +29,7 @@ Or inside Claude Code: `/plugin marketplace add jz-wilson/claude-setup`, then `/
 - **Fable warning:** a subagent running on Fable gets a red border and a warning line, and the header counts them, because it is the priciest model and rarely needed for a worker. The main session may run on it unflagged.
 - **Session spend** stays in the header even after you clear finished cards. Prices are a table in `hooks/register.tsx`, read from the public pricing page on 2026-10-19; update `PRICES` when they change.
 - **Folds the transcript:** while the pane is on screen, the transcript's Agent rows collapse into it, and they redraw in full when it closes.
-- **claude-hud:** if you use the [claude-hud](../claude-hud/README.md) status line, the pane hides its agent line while visible (`showAgents` in claude-hud's config) and restores the original value afterwards, even after a crash.
+- **claude-hud:** if you use the [claude-hud](../claude-hud/README.md) status line, the pane hides its agent line while visible (`showAgents` in claude-hud's config) and restores the original value afterwards, even after a crash. It finds claude-hud's config at `$CLAUDE_CONFIG_DIR/plugins/claude-hud/config.json` when that variable is set, otherwise `~/.claude/plugins/claude-hud/config.json`.
 
 ## prompt-refiner
 

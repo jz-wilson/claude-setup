@@ -67,6 +67,18 @@ echo '{"tool_name":"Bash","tool_input":{"command":"gh auth token"}}' | bun hooks
 echo '{"tool_name":"Bash","tool_input":{"command":"cat big.md"}}' | bun hooks/scripts/read-guard.ts
 ```
 
+## Rebuild spec
+
+The three scripts can be rebuilt from this guide plus [scripts/README.md](scripts/README.md), which pins down every function, list, rule and edge case the tests check. The contract in short:
+
+| Module | Exports | Contract |
+|---|---|---|
+| `shell-parse.ts` | `scan(src)`, `base`, `firstWordIndex`, `commandIndex`, types `Seg` and `Scan` | `scan` returns `{ segs, breaks }`: each segment has `words`, `captured`, `sepAfter`, `top`; `breaks` counts unjoined top-level newlines |
+| `shell-guard.ts` | `secretVerdict`, `envVerdict`, `chainVerdict`, `evaluate`, `decide`, `SECRET_COMMANDS` | Verdict functions take `(tool, command)` and return a reason string (deny) or `null` (allow). `decide(raw)` takes the hook JSON text |
+| `read-guard.ts` | `readVerdict(tool, command)`, `decide` | Same shape |
+
+Both guards, run as a script, read the hook JSON from stdin, print `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<guard>: <reason>"}}` when `decide` returns a reason, print nothing otherwise, and always exit 0.
+
 ## Ideas for more
 
 - **Size guard:** deny reading files above N lines in one go; ask for a targeted range instead.
