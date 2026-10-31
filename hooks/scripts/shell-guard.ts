@@ -92,6 +92,27 @@ function stripSingleQuoted(s: string): string {
   return out;
 }
 
+// `echo $(curl -H "Bearer $TOKEN" x)` prints curl's output, not the token, so in Bash each
+// innermost `$(…)` and backtick substitution is cut out and tested as its own command, with
+// a placeholder left behind. Fails closed: if anything is left unbalanced (`$(`, `$((`, a
+// backtick, a stray `)`), an escaped `\$` or backtick makes a substitution literal, or after
+// 50 rounds, the whole text is tested as before. PowerShell keeps the whole text: its `$( )`
+// is a subexpression whose value is printed.
+function substitutionParts(tool: string, text: string): string[] {
+  if (tool !== "Bash" || /\\[$\x60]/.test(text)) return [text];
+  const parts: string[] = [];
+  let rest = text;
+  for (let round = 0; round < 50; round++) {
+    const next = rest.replace(/\$\((?!\()[^()\x60]*\)|\x60[^\x60\\]*\x60/g, (sub) => {
+      parts.push(sub.startsWith("$(") ? sub.slice(2, -1) : sub.slice(1, -1));
+      return " _ ";
+    });
+    if (next === rest) return /[()\x60]/.test(rest) ? [text] : [rest, ...parts];
+    rest = next;
+  }
+  return [text];
+}
+
 const LISTERS = new Set(["get-childitem", "gci", "ls", "dir", "get-item", "gi"]);
 
 export function envVerdict(tool: string, command: string): string | null {
@@ -103,7 +124,7 @@ export function envVerdict(tool: string, command: string): string | null {
   // Case-insensitive throughout: PowerShell cmdlets and variable names ignore case, and a
   // lower-case $token is as much a secret as $TOKEN.
   const printing = new RegExp(String.raw`\b(echo|printf|print|write-host|write-output)\b[^;&|\n]*${ref}|\bprintenv\s+${S}|(^|[;&|\n]\s*)\$env:${S}\s*($|[;&|\n])`, "mi");
-  if (printing.test(text)) {
+  if (substitutionParts(tool, text).some((part) => printing.test(part))) {
     return "This prints a secret-looking environment variable. Test it with `[ -n \"$NAME\" ]` or pass it to the command that needs it.";
   }
   for (const seg of scan(command).segs) {

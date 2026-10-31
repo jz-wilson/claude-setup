@@ -16,7 +16,7 @@ A **verdict** is `string | null`: a reason text means deny, `null` means allow. 
 
 ## CLI entry (both guards)
 
-1. Read all of stdin as text.
+1. Read all of stdin as text with `await Bun.stdin.text()` written directly at module top level inside the `if (import.meta.main) { … }` block, i.e. `const reason = decide(await Bun.stdin.text());` (not inside a helper function: on Windows a nested awaited stdin read has let Bun exit 0 early).
 2. Call `decide(raw)`.
 3. If it returns a reason, print one line of JSON to stdout: `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<guard>: <reason>"}}`, where `<guard>` is `shell-guard` or `read-guard`. If it returns `null`, print nothing.
 4. Always exit 0.
@@ -58,20 +58,20 @@ The scanner walks the text one character at a time inside a recursive function `
    - Any other next character (or end of input): the backslash itself is a literal character. This keeps Windows paths such as `C:\Users\x` intact.
 3. **Single quote** starts a literal run up to the next `'`, or to the end of input if there is none. The run is appended to the current word. The word exists even if empty, so `''` is an empty word.
 4. **Double quote** starts a run up to the next unescaped `"` (or end of input). Inside it:
-   - A backslash followed by any character adds that next character only (so `\"` gives `"`, `\n` gives the letter `n`).
+   - A backslash followed by any character adds that next character only (so `\"` gives `"`, `\n` gives the letter `n`); a backslash with no following character is literal.
    - `$(` descends: the nested body runs at depth+1 and the word gets `$()`. It is `captured` only when the quote directly follows an assignment (the word so far ends with `=`) and `$(` is the very first thing inside the quotes: `X="$(cmd)"`.
    - A backtick with a closing backtick later in the text: the text between is scanned recursively with a fresh `scan`, its segments are added with `top: false` (their own `captured` kept), and the word gets `$()`. A backtick with no closing one is a literal character.
    - Everything else, including spaces and `;`, is added literally.
-5. **Backtick outside quotes** with a closing backtick: scan the inside recursively; add its segments with `top: false` and `captured` set to (its own captured OR the assignment test below); the word gets `$()`. Without a closing backtick it is a literal character.
+5. **Backtick outside quotes** with a closing backtick: scan the inside recursively; add its segments with `top: false` and `captured` set to (its own captured OR the assignment test below); the word gets `$()`. Without a closing backtick it is a literal character. The closing backtick is simply the next backtick (plain search, no escape handling), in quotes or not.
 6. **`$(`**: command substitution. `captured` is the assignment test, then the nested body runs at depth+1 and the word gets `$()`.
 7. **`(` at the start of a word** (no word in progress): a subshell or PowerShell grouping, handled exactly like `$(` but consuming one character. A `(` in the middle of a word is a literal character, so `<(git log)` stays a word `<(git` followed by `log)`.
 8. **`#` at the start of a word** is a comment: skip to the end of the line (the newline is kept). A `#` inside a word is literal.
 9. **Space, tab, `\r`** end the current word.
 10. **Newline** (see "breaks" below for the counting) ends the segment with `sepAfter "\n"`, even inside a substitution. Then any queued heredoc bodies are skipped (below).
-11. **Heredoc** `<<`: only when the next character is not `<` and the previous character is not `<` (so `<<<` is never a heredoc). The text must match `<<`, optional `-`, optional whitespace, then a tag that is `'…'`, `"…"` or a bare run of characters other than whitespace and `; & | ( ) < >`. The whitespace between the operator and the tag is any whitespace, newlines included, so `<<\nEOF` takes `EOF` as the tag (an unquoted tag also stops at the first of those excluded characters). On a match, queue the tag (with a "strip tabs" flag when `-` was present), consume the operator and tag so neither becomes a word, and count it as a token. The word in progress is not ended: `cat<<EOF` leaves the word `cat` open (it ends at the next space), so it yields the word `cat`, not `cat` plus anything from the operator. If it does not match, `<` is an ordinary character. Quoted or not, the body is always skipped and never scanned.
+11. **Heredoc** `<<`: only when the character after the `<<` pair is not `<` and the character before it is not `<` (so `<<<` is never a heredoc). The text must match `<<`, optional `-`, optional whitespace, then a tag that is `'…'`, `"…"` or a bare run of characters other than whitespace and `; & | ( ) < >`. The whitespace between the operator and the tag is any whitespace, newlines included, so `<<\nEOF` takes `EOF` as the tag (an unquoted tag also stops at the first of those excluded characters). On a match, queue the tag (with a "strip tabs" flag when `-` was present), consume the operator and tag so neither becomes a word, and count it as a token. The word in progress is not ended: `cat<<EOF` leaves the word `cat` open (it ends at the next space), so it yields the word `cat`, not `cat` plus anything from the operator. If it does not match, `<` is an ordinary character. Quoted or not, the body is always skipped and never scanned.
 12. **`;`, `|`, `&`**:
     - `&` directly after `>` or directly before `>` is part of a redirection (`2>&1`, `>&2`, `&>file`): it is appended to the current word.
-    - PowerShell call operator: an `&` not followed by `&`, with no word in progress, when the segment is empty or its last word is `=`, is dropped silently (`& cmd`, `$x = & cmd`).
+    - PowerShell call operator: an `&` not followed by `&`, with no word in progress, when the segment is empty or its last word is `=`, is dropped silently (`& cmd`, `$x = & cmd`); it is not a token, so it does not affect break counting.
     - Otherwise the operator is `&&`, `||` or the single character. The segment ends with that `sepAfter`.
 13. **Anything else** is appended to the current word.
 
@@ -97,7 +97,7 @@ The captured flag is for the substituted command only. In `TOKEN=$(gh auth token
 - A newline that follows a trailing `&&`, `||` or `|` (nothing since the operator except spaces) does not count: that line is joined to the next.
 - A trailing `;` does not join. `a;\nb` is one break.
 - Otherwise the newline is a pending break. It only becomes a counted break when the next token arrives on a later line, so trailing newlines at the end of the input add nothing.
-- A token is any character or quote that becomes part of a word, a substitution, or a heredoc operator; whitespace and comments are not tokens. Seeing a token also clears the remembered "last operator".
+- A token is any character or quote that becomes part of a word, a substitution, or a heredoc operator; whitespace and comments are not tokens. Seeing a token also clears the remembered "last operator". Any depth-0 separator (`;`, `&`, `&&`, `||`, `|`) sets it, but only `&&`, `||`, `|` join, and only when the line ended with no word in progress, so `a\n&& b` counts a break (the `&&` is not a token, but `b` is).
 - Backslash-newline continuation joins lines and counts nothing.
 - Newlines inside `$( )`, `( )`, backticks and heredoc bodies never count, because they are at depth 1 or are skipped.
 
@@ -140,7 +140,7 @@ Applies to tools `Bash` and `PowerShell` (chain rule: `Bash` only). Every verdic
 ### decide
 
 1. `JSON.parse(raw)`. `tool_name` is `String(input?.tool_name ?? "")`; the command is `String(input?.tool_input?.command ?? "")`. Return `evaluate(tool, command)`.
-2. Any exception inside that `try` (bad JSON, or anything thrown by the rules) is handled in the `catch`: if the raw text matches `\b(gh|op|bw|vault|aws|gcloud)\b` (the keys of `SECRET_COMMANDS`), return `could not parse a command that mentions a secret CLI, so it is denied.`; otherwise return `null`. This is the fail-closed rule.
+2. Any exception inside that `try` (bad JSON, or anything thrown by the rules) is handled in the `catch`: if the raw text matches the case-sensitive, flagless `\b(gh|op|bw|vault|aws|gcloud)\b` (the keys of `SECRET_COMMANDS`), return `could not parse a command that mentions a secret CLI, so it is denied.`; otherwise return `null`. This is the fail-closed rule.
 
 So `decide("not json gh auth token")` contains `denied`, `decide("not json")` is `null`, and `decide` of valid JSON with command `ls` is `null`.
 
@@ -163,7 +163,7 @@ Shells that run a string: `bash sh zsh dash pwsh powershell cmd eval iex invoke-
 `analyze(src, out, depth)` scans `src` and checks each segment:
 
 1. **Printing context.** `printsArgs` is true when some top-level segment's command word (`base` of `words[commandIndex]`) is a printer. This is what makes `echo $(gh auth token)` bad.
-2. **PowerShell assignment.** If the segment starts with a word like `$name` (matches `^\$[\w:.]+$`) followed by the word `=`, drop those two words and treat the segment as captured.
+2. **PowerShell assignment.** If the segment starts with a word like `$name` (matches `^\$[\w:.]+$`) followed by the word `=`, drop those two words and treat the segment as captured. The later steps use the stripped words (including the redirect test), but step 1 and the next-segment test in step 4 use each segment's raw words.
 3. **Find the CLI.** `k = commandIndex(words)`, `cli = base(words[k])`. The subcommand test looks at the words after `k`, drops every word starting with `-`, and looks for a path as a consecutive run anywhere in what remains. That lets global flags and their values sit in between (`gh --repo a/b auth token`, `aws --profile dev secretsmanager get-secret-value`, `bw --session abc get password x`). It returns the matching path or no match. Use own-property lookup on `SECRET_COMMANDS`.
 4. **On a match, it is safe when any of these holds:**
    - the segment is `captured`;
@@ -190,13 +190,20 @@ Match: `GITHUB_TOKEN`, `github_token`, `token`, `Api_Key`, `OPENAI_APIKEY`, `STR
 
 `envVerdict` works on a cleaned copy of the command:
 
-1. Remove quoted heredoc bodies (replace with one space): the pattern is `<<` with optional `-` and spaces, a tag in matching single or double quotes, the rest of that line, then everything up to a line that is only that tag (leading spaces allowed) at a newline or the end. Unquoted heredocs are not removed. The tag is `\w+` only; the terminator line may have leading whitespace but nothing after the tag (a trailing space means it is not a terminator); the body is matched lazily up to the first such line; the match is replaced by one space. With no terminator line the pattern does not match, so nothing is removed and the body is tested as ordinary text (unlike `scan`, which would skip it).
+1. Remove quoted heredoc bodies (replace with one space): the pattern is `<<` with optional `-` and spaces, a tag in matching single or double quotes, the rest of that line, then everything up to a line that is only that tag (leading spaces allowed) at a newline or the end. Unquoted heredocs are not removed. Between `<<-?` and the quote any whitespace is allowed. The body needs at least one newline before the terminator line, so a heredoc whose terminator is the very next line (empty body) is not removed. The tag is `\w+` only; the terminator line may have leading whitespace but nothing after the tag (a trailing space means it is not a terminator); the body is matched lazily up to the first such line; the match is replaced by one space. With no terminator line the pattern does not match, so nothing is removed and the body is tested as ordinary text (unlike `scan`, which would skip it).
 2. Remove single-quoted text, only outside double quotes. Walk the characters: a `"` not preceded by a backslash flips an in-double flag; a `'` outside double quotes with a later closing `'` is replaced (with the text between) by one space; an unmatched `'`, or any `'` inside double quotes, stays. So `echo "it's" $GITHUB_TOKEN "don't"` still shows the variable.
 
 **Printing test** (one regex, flags `mi`: multi-line and case-insensitive), on the cleaned text. A *reference* is `$NAME`, `${NAME}`, `$env:NAME` or `%NAME%`, where NAME matches `SECRET_ENV`. Deny with `This prints a secret-looking environment variable. Test it with `[ -n "$NAME" ]` or pass it to the command that needs it.` when any of these is found:
-- one of `echo`, `printf`, `print`, `write-host`, `write-output` in any letter case (`Echo`, `Write-Host`, `WRITE-HOST` all match), as a whole word, then any characters except `; & | newline`, then a reference. The reference must come after the printer and before the next separator, so `[ -n "$TOKEN" ] && echo set` passes and `curl -H "Bearer $TOKEN"` passes;
+- one of `echo`, `printf`, `print`, `write-host`, `write-output` in any letter case (`Echo`, `Write-Host`, `WRITE-HOST` all match), delimited by a plain `\b` (so `-print` or `/echo` also match), then any characters except `; & | newline`, then a reference. The reference must come after the printer and before the next separator, so `[ -n "$TOKEN" ] && echo set` passes and `curl -H "Bearer $TOKEN"` passes;
 - `printenv`, whitespace, then a secret name (`printenv AWS_SECRET_ACCESS_KEY`);
-- a lone `$env:NAME` that makes up a whole statement (line start or after `; & | newline`, then end or the next separator), which PowerShell prints.
+- a lone `$env:NAME` that makes up a whole statement (line start or after `; & | newline`, then end or the next separator), which PowerShell prints; whitespace is allowed around it and "end" is end of line (`$` under flag `m`).
+
+The regex is not run once on the cleaned text but on each of its **parts**, from `substitutionParts(tool, text)` (not exported); deny if any part matches. This keeps `echo $(curl -H "Bearer $TOKEN" x)` (which prints curl's output, not the token) from being denied, while failing closed on anything it cannot take apart:
+- For any tool but `Bash`, the parts are `[text]`. PowerShell's `$( )` is a subexpression whose value is printed, so `Write-Host "$($env:GITHUB_TOKEN)"` stays denied.
+- For `Bash`, if the text contains a backslash followed by `$` or a backtick (`/\\[$\x60]/`), the parts are `[text]`: an escaped `\$(` is literal, so `echo "\$(curl $TOKEN)"` prints the token.
+- Otherwise, repeat up to 50 rounds on a working copy `rest` (starting as `text`): replace every match of `/\$\((?!\()[^()\x60]*\)|\x60[^\x60\\]*\x60/g` (an innermost `$( … )` with no parentheses or backticks inside and not `$((`, or a backtick pair with no backslash inside; `\x60` is a backtick) with ` _ `, pushing its body (without `$(`/`)` or the backticks) onto a list. When a round changes nothing: if `rest` still contains `(`, `)` or a backtick, the parts are `[text]`; otherwise they are `[rest, ...bodies]`. After 50 rounds that all changed something, the parts are `[text]`.
+
+So `echo $(a $(b "$TOKEN"))` and `` echo `curl "$TOKEN"` `` pass; `echo "$(date) $TOKEN"`, `echo $(echo $TOKEN)` (the body matches on its own), `curl -H "$(printf %s "$KEY")" x`, and anything left unbalanced (`echo $(foo "(") $TOKEN`, `$((…))`, an escaped backtick, an unclosed `$(`) are denied because the whole text is tested.
 
 **Dump test**, on the original command's segments (not the cleaned text). For each segment: compute `k = firstWordIndex(words)` (not `commandIndex`), `cmd = base(words[k])`, `args = words.slice(k+1)`. Skip the segment when `sepAfter` is `|` (a filtered dump, `env | grep PATH`, `printenv | wc -l`). Otherwise it is a dump when:
 - `cmd` is `printenv`, `env` or `set` with no args; or
@@ -213,7 +220,7 @@ Allowed examples: `env FOO=1 cmd` (has args), `set -e`, `export FOO=1`, `printen
 
 1. `{segs, breaks} = scan(command)`. Return `null` when `breaks` is 0 or no segment is a commit or push.
 2. **Commit or push segment:** command word (`commandIndex`) is `git`; scanning the words after it, a `-C` or `-c` skips its value, the first other word not starting with `-` decides, and it counts only if it is `commit` or `push`. (`git -C repo commit` counts; `git status` does not.)
-3. **Opt-out:** take the first top-level segment's words. If its first word is `set` and the second matches `^-[a-zA-Z]*e` (`-e`, `-eu`, `-xe`), or the second is `-o` and the third is `errexit`, return `null`.
+3. **Opt-out:** take the first top-level segment's words (first `top` segment in `segs` order). If its first word is `set` and the second matches `^-[a-zA-Z]*e` (`-e`, `-eu`, `-xe`), or the second is `-o` and the third is `errexit`, return `null`.
 4. Otherwise return `Multi-line command with git commit/push: a failing earlier line would not stop it. Start the command with `set -e`, or join every line before the last with `&&`.`
 
 Cases: `git add -A\ngit commit -m x` denied; `cd repo\ngit push` denied; with a leading `set -e` allowed; `git add -A &&\ngit commit -m x` allowed; single-line `git commit -m x` allowed; a commit whose message is a `$(cat <<'EOF' …)` heredoc across lines allowed (zero breaks).
@@ -229,7 +236,7 @@ Tool `Bash` only; `readVerdict("PowerShell", …)` is `null`.
 | `readVerdict` | `(tool: string, command: string, depth = 0) => string \| null` |
 | `decide` | `(raw: string) => string \| null` |
 
-`decide`: parse the JSON, call `readVerdict(String(tool_name ?? ""), String(tool_input.command ?? ""))`. Any exception (bad JSON, or one thrown by the rules) returns `null`: this guard fails open, since a non-hook payload has nothing to guard.
+`decide`: parse the JSON, call `readVerdict(String(input?.tool_name ?? ""), String(input?.tool_input?.command ?? ""))` (optional chaining, so a missing `tool_input` gives an empty command and `null`, not a throw). Any exception (bad JSON, or one thrown by the rules) returns `null`: this guard fails open, since a non-hook payload has nothing to guard.
 
 ### readVerdict
 
@@ -251,7 +258,7 @@ Tool `Bash` only; `readVerdict("PowerShell", …)` is `null`.
 | Arg | Effect |
 |---|---|
 | `<<<` exactly, or starting with `<<<` | Here-string. Skip it; when it was exactly `<<<`, also skip the next word. |
-| starts with `<(` | Process substitution. Skip words until one ends with `)`. |
+| starts with `<(` | Process substitution. Skip words until one ends with `)`, starting with this word itself (so `<(x)` alone is skipped). |
 | `<` exactly | Input redirect. If a next word exists, it is a file operand and is consumed. (`cat < input.txt` is a read.) |
 | starts with a redirect (`^(\d\|&)?>>?`) | Output redirect. Skip it; when the arg is only the operator (`^(\d\|&)?>>?$`), also skip the next word (the target). |
 | a value flag for this command | Skip it and the next word. |
@@ -280,6 +287,9 @@ Consequences: a command with no operand reads stdin and passes (`cat`, `git log 
 | `git commit -m "stop running gh auth token"`, `echo 'gh auth token'`, `grep -rn 'op read' .` | secret | allow | the words are inside one quoted word |
 | `Read` tool with `gh auth token` | secret | allow | wrong tool |
 | `echo -n "$API_KEY"`, `printf "%s" "$DB_PASSWORD"`, `echo "it's" $GITHUB_TOKEN "don't"`, PowerShell `echo $env:OPENAI_API_KEY`, PowerShell `Write-Host $env:GITHUB_TOKEN`, PowerShell `WRITE-HOST $env:github_token`, `echo $token`, `echo $STRIPE_API` | env | deny | printer followed by a reference |
+| `echo "$(date) $GITHUB_TOKEN"`, `` echo `date` $GITHUB_TOKEN ``, `echo $(echo $GITHUB_TOKEN)`, `curl -H "$(printf %s "$API_KEY")" x` | env | deny | the reference is outside the substitution, or an inner printer prints it |
+| `echo $(foo "(") $GITHUB_TOKEN`, `echo $((1+2)) $GITHUB_TOKEN`, `echo $(($GITHUB_TOKEN))`, `` echo "\`" $GITHUB_TOKEN ``, `echo $(date $GITHUB_TOKEN`, PowerShell `Write-Host "$($env:GITHUB_TOKEN)"` | env | deny | not taken apart, so the whole text is tested |
+| `echo $(curl -H "Authorization: Bearer $GITHUB_TOKEN" x)`, `` echo `curl -H "Bearer $GITHUB_TOKEN" x` ``, `echo $(a $(b $(c "$API_KEY")))` | env | allow | the reference is passed to a command inside the substitution |
 | `printenv`, `env`, `export -p`, PowerShell `Get-ChildItem env:` | env | deny | unfiltered dump |
 | `env \| grep PATH`, `printenv \| wc -l`, `env FOO=1 cmd` | env | allow | filtered or has args |
 | `cat < input.txt`, `bash -c 'cat secrets.txt'`, `echo start; cat config.json`, `cd repo && cat README.md` | read | deny | a reader with a file operand in some segment |
@@ -293,3 +303,7 @@ Kept as they are; a rebuild does not need to fix them, and none is tested.
 - `SECRET_COMMANDS[cli]` is a plain object lookup, so a command word such as `constructor` finds an inherited member and throws inside `secretVerdict` (`decide` catches it, so the command is denied only if the raw text mentions a secret CLI). A rebuild may use an own-property check instead.
 - `cat <file` with no space after `<` is one word `<file`, which `fileOperands` takes as a file name (still denied, but the file name shown in the reason includes the `<`).
 - `sudo -u root cmd`: `commandIndex` skips `sudo` and `-u` but not its value, so the command word is `root`.
+- Printing through a non-printer inside a substitution is not seen: `echo $(cat <<< "$TOKEN")` passes, because `cat` is not in the printing test's printer list.
+- A separator inside a substitution ends the printer's span: `echo $(case x in x) date;; esac) $TOKEN` passes (the stray `)` sends it to the whole-text test, where `;;` stops the span).
+- `scan` recurses once per `$(`, so a command nested many thousands deep overflows the stack; `decide` catches it and allows unless the raw text names a secret CLI.
+- Strict by design: `REACT_APP_API`, `CACHE_KEY` and `OLD_PWD` are treated as secrets (see `SECRET_ENV`). A false deny costs one rewritten command; a missed secret lands in the transcript.

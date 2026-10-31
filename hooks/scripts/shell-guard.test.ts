@@ -74,6 +74,24 @@ test("filtered env use passes", () => {
   expect(envVerdict("Bash", "cat > f <<'EOF'\nuse $TOKEN here\nEOF")).toBeNull();
 });
 
+test("a secret passed inside a command substitution is not printed by the outer printer", () => {
+  for (const c of [
+    'echo $(curl -H "Authorization: Bearer $GITHUB_TOKEN" x)', 'echo "status: $(curl -su "u:$DB_PASS" x)"',
+    "echo `curl -H \"Bearer $GITHUB_TOKEN\" x`", 'echo $(a $(b "$GITHUB_TOKEN"))', 'echo $(a $(b $(c "$API_KEY")))',
+  ]) expect(envVerdict("Bash", c)).toBeNull();
+  for (const c of [
+    'echo "$(date) $GITHUB_TOKEN"', "echo $((1+2)) $GITHUB_TOKEN", "echo `date` $GITHUB_TOKEN",
+    'echo $(echo $GITHUB_TOKEN)', 'curl -H "$(printf %s "$API_KEY")" x', "echo $(a $(b)) $GITHUB_TOKEN",
+    // Anything the strip cannot balance falls back to the whole text, so these fail closed.
+    'echo $(foo "(") $GITHUB_TOKEN', "echo $(a $(b $(c))) $GITHUB_TOKEN", 'echo "\\`" $GITHUB_TOKEN',
+    'echo $(true) $(foo "(") "$GITHUB_TOKEN"', "echo $(($GITHUB_TOKEN))",
+    "echo $(date $GITHUB_TOKEN", 'echo "\\$(curl $GITHUB_TOKEN)"', 'echo "\\$(x ${API_KEY})"',
+  ]) expect(envVerdict("Bash", c)).not.toBeNull();
+  // PowerShell $( ) is a subexpression whose value is printed, so it is never stepped over.
+  for (const c of ['Write-Host "$($env:GITHUB_TOKEN)"', "Write-Host $($env:GITHUB_TOKEN)"])
+    expect(envVerdict("PowerShell", c)).not.toBeNull();
+});
+
 test("multi-line commit or push needs set -e or &&", () => {
   expect(chainVerdict("Bash", "git add -A\ngit commit -m x")).not.toBeNull();
   expect(chainVerdict("Bash", "cd repo\ngit push")).not.toBeNull();
