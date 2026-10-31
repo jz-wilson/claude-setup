@@ -1,117 +1,180 @@
 #!/usr/bin/env bun
-// Agent-log validator. Save as scripts/validate-logs.ts in the vault.
+// Agent-log validator.
 //   bun scripts/validate-logs.ts            check every agents/*/reports/*.md (archive/ skipped)
 //   bun scripts/validate-logs.ts a.md b.md  check only those files
 //   bun scripts/validate-logs.ts --hook     Claude Code PostToolUse hook: reads the hook JSON on stdin,
 //                                           checks the written file if it is an agent log, exits 2 on errors
 import { existsSync, readFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { relative, resolve, basename } from "node:path";
+import {
+  DATE_RE, bodyHeadings, extractField, extractTagsList, fmLineNo, checkBodyPaths, checkHeadings, checkRetiredWikiLinks, isValidCalendarDate,
+  validateCommonNoteShape, validateEdges, type LineError,
+} from "./frontmatter.ts";
+import { builtinEdgeTypes, loadFromScript, runMain } from "./config.ts";
 
-const ROOT = resolve(import.meta.dir, "..");
-const REQUIRED = ["updated", "tags", "type", "agent", "status", "task", "priority", "date"];
-const STATUS = ["active", "blocked", "awaiting-approval", "completed", "error"];
-const PRIORITY = ["high", "medium", "low"];
-const NAME_RE = /^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const ABS_PATH_RE = /file:\/\/|\b[A-Za-z]:[\\/]|\\\\[\w.-]+\\|(^|[\s(])\/(Users|home|mnt|root|var|etc|opt)\//;
-const FENCE_RE = /^\s*(```|~~~)/;
-const realDate = (d: string) => { const t = new Date(`${d}T00:00:00Z`); return !isNaN(+t) && t.toISOString().startsWith(d); };
-const isLog = (rel: string) => /^agents\/[^/]+\/reports\/[^/]+\.md$/.test(rel.replaceAll("\\", "/"));
+const REQUIRED_FIELDS = ["updated", "tags", "type", "agent", "status", "task", "priority", "date"];
+const VALID_STATUS = ["active", "blocked", "awaiting-approval", "completed", "error"];
+const VALID_PRIORITY = ["high", "medium", "low"];
+const VALID_ERROR_CLASS = ["transient", "permanent"];
+const FILENAME_RE = /^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md$/;
 
-// Minimal frontmatter parser: `key: value` lines, inline `# comments`, quoted values,
-// and lists written either as `[a, b]` or as indented `- a` lines.
-function parseFrontmatter(lines: string[]): Map<string, string | string[]> {
-  const fm = new Map<string, string | string[]>();
-  let listKey = "";
-  for (const l of lines) {
-    const item = l.match(/^\s+-\s+(.*?)\s*$/);
-    if (item && listKey) { (fm.get(listKey) as string[]).push(item[1].replace(/^["']|["']$/g, "")); continue; }
-    const m = l.match(/^([a-z_]+):\s*(.*)$/);
-    if (!m) continue;
-    const value = m[2].replace(/\s+#.*$/, "").trim();
-    listKey = "";
-    if (value === "") { fm.set(m[1], []); listKey = m[1]; }
-    else if (value.startsWith("[") && value.endsWith("]"))
-      fm.set(m[1], value.slice(1, -1).split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean));
-    else fm.set(m[1], value.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1"));
+const sortedList = (a: string[]) => "[" + [...a].sort().map((s) => `'${s}'`).join(", ") + "]";
+
+/** `edgeTypes` is optional so external callers keep the old two-arg signature; omitting it
+ *  validates against the built-in vocabulary only, losing this vault's `edge_types` extras.
+ *  Both in-repo call sites (main() below, validate-vault.ts's dispatch) pass the real set. */
+export function validateAgentLog(
+  path: string,
+  vaultRoot: string,
+  edgeTypes: Set<string> = builtinEdgeTypes(),
+  text?: string,
+): [string, LineError[]] {
+  const errors: LineError[] = [];
+  const rel = relative(vaultRoot, path).replaceAll("\\", "/"); // uniform with validate-vault output
+  const fname = basename(path);
+
+  if (!FILENAME_RE.test(fname))
+    errors.push([1, `filename does not match YYYY-MM-DD-slug.md pattern: ${fname}`]);
+
+  const { errors: shapeErrors, shape } = validateCommonNoteShape(path, text);
+  errors.push(...shapeErrors);
+  if (shape === null) return [rel, errors];
+  const { fm, body, closeLineNo, fmStart } = shape;
+
+  for (const field of REQUIRED_FIELDS)
+    if (extractField(fm, field) === null)
+      errors.push([fmStart, `missing required frontmatter field: '${field}'`]);
+
+  const typeVal = extractField(fm, "type");
+  if (typeVal !== null && typeVal !== "agent-log")
+    errors.push([fmLineNo(fm, "type", fmStart), `'type' must be 'agent-log', got: '${typeVal}'`]);
+
+  const statusVal = extractField(fm, "status");
+  if (statusVal !== null && !VALID_STATUS.includes(statusVal))
+    errors.push([fmLineNo(fm, "status", fmStart), `'status' must be one of ${sortedList(VALID_STATUS)}, got: '${statusVal}'`]);
+
+  const priorityVal = extractField(fm, "priority");
+  if (priorityVal !== null && !VALID_PRIORITY.includes(priorityVal))
+    errors.push([fmLineNo(fm, "priority", fmStart), `'priority' must be one of ${sortedList(VALID_PRIORITY)}, got: '${priorityVal}'`]);
+
+  for (const field of ["date", "updated"]) {
+    const val = extractField(fm, field);
+    if (val !== null && !DATE_RE.test(val))
+      errors.push([fmLineNo(fm, field, fmStart), `'${field}' must match YYYY-MM-DD, got: '${val}'`]);
+    else if (val !== null && !isValidCalendarDate(val))
+      errors.push([fmLineNo(fm, field, fmStart), `'${field}' is not a real calendar date: '${val}'`]);
   }
-  return fm;
+
+  const tagsVal = extractTagsList(fm);
+  if (tagsVal !== null && !tagsVal.includes("agent-log"))
+    errors.push([fmLineNo(fm, "tags", fmStart), "'tags' must contain 'agent-log'"]);
+
+  const agentVal = extractField(fm, "agent");
+  if (agentVal !== null && agentVal.trim() === "")
+    errors.push([fmLineNo(fm, "agent", fmStart), "'agent' value must be non-empty"]);
+
+  for (const e of validateEdges(fm, fmStart, edgeTypes)) errors.push(e);
+
+  if (statusVal === "error") {
+    const ec = extractField(fm, "error_class");
+    if (ec === null) errors.push([fmStart, "status is 'error' but 'error_class' field is missing"]);
+    else if (!VALID_ERROR_CLASS.includes(ec))
+      errors.push([fmLineNo(fm, "error_class", fmStart), `'error_class' must be one of ${sortedList(VALID_ERROR_CLASS)}, got: '${ec}'`]);
+    if (!bodyHeadings(body).some((h) => h.level === 2 && h.title === "Error Log"))
+      errors.push([closeLineNo + 1, "status is 'error' but body is missing '## Error Log' section"]);
+  }
+
+  // The dashboard's "completed but unverified" list depends on these fields. Archived logs
+  // are frozen history, so only live logs are held to the completion rules.
+  if (statusVal === "completed" && !rel.split("/").includes("archive")) {
+    const cs = extractField(fm, "completion_signal");
+    if (cs !== "true")
+      errors.push([fmLineNo(fm, "completion_signal", fmStart), "status is 'completed' but 'completion_signal' is not true"]);
+    if (extractField(fm, "verified") === null)
+      errors.push([fmStart, "status is 'completed' but 'verified' field is missing (write verified: false; a human flips it)"]);
+    if (!hasVerificationEvidence(body))
+      errors.push([closeLineNo + 1, "status is 'completed' but '### Verification' under ## Notes is missing or empty (list the checks run and their results)"]);
+  }
+
+  for (const e of checkHeadings(body, closeLineNo + 1)) errors.push(e);
+  for (const e of checkBodyPaths(body, closeLineNo + 1)) errors.push(e);
+  for (const e of checkRetiredWikiLinks(body, closeLineNo + 1)) errors.push(e);
+  return [rel, errors];
 }
 
-export function validate(path: string): string[] {
-  const errors: string[] = [];
-  const add = (line: number, msg: string) => errors.push(`${relative(ROOT, path)}:${line}: ${msg}`);
-  if (!NAME_RE.test(basename(path))) add(1, "filename must be YYYY-MM-DD-slug.md");
-
-  const lines = readFileSync(path, "utf8").replace(/^﻿/, "").split(/\r?\n/);
-  const close = lines[0] === "---" ? lines.indexOf("---", 1) : -1;
-  if (close < 0) { add(1, "file must start with a --- frontmatter block"); return errors; }
-
-  const fm = parseFrontmatter(lines.slice(1, close));
-  const get = (k: string) => { const v = fm.get(k); return typeof v === "string" ? v : ""; };
-  for (const f of REQUIRED) if (!fm.has(f)) add(1, `missing frontmatter field '${f}'`);
-  if (fm.has("type") && get("type") !== "agent-log") add(1, `'type' must be agent-log, got '${get("type")}'`);
-  if (fm.has("status") && !STATUS.includes(get("status"))) add(1, `'status' must be one of ${STATUS.join(", ")}`);
-  if (fm.has("priority") && !PRIORITY.includes(get("priority"))) add(1, `'priority' must be one of ${PRIORITY.join(", ")}`);
-  for (const f of ["date", "updated"])
-    if (fm.has(f) && !(DATE_RE.test(get(f)) && realDate(get(f)))) add(1, `'${f}' must be a real YYYY-MM-DD date`);
-  const tags = fm.get("tags");
-  if (fm.has("tags") && !(Array.isArray(tags) && tags.includes("agent-log"))) add(1, "'tags' must be a list containing agent-log");
-  if (fm.has("agent") && !get("agent")) add(1, "'agent' must be non-empty");
-
-  // Walk the body outside code fences: headings, sections, and absolute paths.
-  const body = lines.slice(close + 1);
-  let h1 = 0, fenced = false, h2 = "", inVerification = false, verificationText = "";
-  const sections: string[] = [];
-  body.forEach((l, i) => {
-    if (FENCE_RE.test(l)) { fenced = !fenced; return; }
-    if (fenced) { if (inVerification) verificationText += l; return; }
-    const heading = l.match(/^(#{1,6}) (.*)$/);
-    if (heading) {
-      const [level, title] = [heading[1].length, heading[2].trim()];
-      if (level === 1) h1++;
-      if (level === 2) { h2 = title; sections.push(title); }
-      if (level <= 3) inVerification = level === 3 && title === "Verification" && h2 === "Notes";
-      return;
-    }
-    if (inVerification) verificationText += l.trim();
-    if (ABS_PATH_RE.test(l.replace(/`[^`]*`/g, ""))) add(close + 2 + i, "absolute path or file:// URL in body; use a relative link");
-  });
-
-  if (get("status") === "error") {
-    if (!["transient", "permanent"].includes(get("error_class"))) add(1, "status error needs error_class: transient|permanent");
-    if (!sections.includes("Error Log")) add(close + 2, "status error needs a '## Error Log' section");
+/** True when `## Notes` holds a `### Verification` heading followed by at least one real line
+ *  (fenced code counts) before the next heading. Placeholders like `_(none yet)_` do not count. */
+export function hasVerificationEvidence(body: string[]): boolean {
+  const hs = bodyHeadings(body);
+  let h2 = "";
+  for (let k = 0; k < hs.length; k++) {
+    const h = hs[k];
+    if (h.level === 1) { h2 = ""; continue; }
+    if (h.level === 2) { h2 = h.title; continue; }
+    if (h.level !== 3 || h.title !== "Verification" || h2 !== "Notes") continue;
+    const end = hs.slice(k + 1).find((n) => n.level <= 3)?.idx ?? body.length;
+    if (body.slice(h.idx + 1, end).some((l) => { const t = l.trim(); return t !== "" && !/^_\(.*\)_$/.test(t); })) return true;
   }
-  if (get("status") === "completed") {
-    if (get("completion_signal") !== "true") add(1, "completed logs need completion_signal: true");
-    if (!fm.has("verified")) add(1, "completed logs need verified: false (a human flips it)");
-    if (!verificationText) add(close + 2, "completed logs need a non-empty '### Verification' under '## Notes' (check run -> result)");
-  }
-  if (h1 !== 1) add(close + 2, `need exactly one H1 title, found ${h1}`);
-  const order = sections.filter((s) => ["Summary", "Notes", "Related"].includes(s));
-  if (order.join() !== "Summary,Notes,Related") add(close + 2, "sections must be ## Summary, ## Notes, ## Related, in that order");
-  return errors;
+  return false;
 }
 
-function allLogs(): string[] {
-  return [...new Bun.Glob("agents/*/reports/*.md").scanSync(ROOT)].map((p) => resolve(ROOT, p)).sort();
+export function findAgentLogs(vaultRoot: string): string[] {
+  const glob = new Bun.Glob("agents/**/reports/*.md");
+  return [...glob.scanSync(vaultRoot)]
+    .filter((p) => !p.split("/").includes("archive"))
+    .map((p) => resolve(vaultRoot, p))
+    .sort();
 }
 
-async function main() {
+const isLogPath = (rel: string) => /^agents\/[^/]+\/reports\/[^/]+\.md$/.test(rel.replaceAll("\\", "/"));
+
+function hook(vaultRoot: string): never {
+  // Synchronous read: an awaited Bun.stdin read under runMain lets Bun exit before it resolves.
+  let input: any = {};
+  try { input = JSON.parse(readFileSync(0, "utf8")); } catch { /* no or bad JSON: nothing to check */ }
+  const file = input?.tool_input?.file_path;
+  if (!file || !isLogPath(relative(vaultRoot, resolve(file))) || !existsSync(file)) process.exit(0);
+  const [rel, errs] = validateAgentLog(resolve(file), vaultRoot, loadFromScript(import.meta.dir).EDGE_TYPES);
+  if (errs.length) {
+    console.error(errs.map(([ln, msg]) => `${rel}:${ln}: ${msg}`).join("\n"));
+    process.exit(2);
+  }
+  process.exit(0);
+}
+
+function main() {
   const args = process.argv.slice(2);
-  if (args[0] === "--hook") {
-    const input = await Bun.stdin.json().catch(() => ({}));
-    const file = input?.tool_input?.file_path;
-    if (!file || !isLog(relative(ROOT, resolve(file))) || !existsSync(file)) process.exit(0);
-    const errs = validate(resolve(file));
-    if (errs.length) { console.error(errs.join("\n")); process.exit(2); }
+  const vaultRoot = resolve(import.meta.dir, "..");
+  if (args[0] === "--hook") hook(vaultRoot);
+  const targets = args.length ? args.map((a) => resolve(a)).sort() : findAgentLogs(vaultRoot);
+  const { EDGE_TYPES } = loadFromScript(import.meta.dir);
+
+  let total = 0;
+  let count = 0;
+  for (const path of targets) {
+    if (!existsSync(path)) {
+      console.log(`${path}:1: file not found`);
+      total++;
+      continue;
+    }
+    const [rel, errs] = validateAgentLog(path, vaultRoot, EDGE_TYPES);
+    count++;
+    for (const [ln, msg] of errs) {
+      console.log(`${rel}:${ln}: ${msg}`);
+      total++;
+    }
+  }
+
+  if (targets.length === 0) {
+    console.log("No files found.");
     process.exit(0);
   }
-  const targets = args.length ? args.map((a) => resolve(a)) : allLogs();
-  const errs = targets.flatMap((t) => (existsSync(t) ? validate(t) : [`${t}:1: file not found`]));
-  for (const e of errs) console.log(e);
-  console.log(errs.length ? `✗ ${targets.length} logs, ${errs.length} errors` : `✓ ${targets.length} logs, 0 errors`);
-  process.exit(errs.length ? 1 : 0);
+  if (total === 0) {
+    console.log(`✓ ${count} files validated, 0 errors`);
+    process.exit(0);
+  }
+  console.log(`✗ ${count} files validated, ${total} errors found`);
+  process.exit(1);
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) runMain(main);

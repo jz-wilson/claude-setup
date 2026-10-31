@@ -20,7 +20,7 @@ Created the vault skeleton, the log validator and the pre-commit hook.
 - Vault created from the claude-setup vault template.
 
 ### Verification
-- `bun scripts/validate-logs.ts` → `✓ 1 logs, 0 errors`
+- `bun scripts/validate-logs.ts` → `✓ 1 files validated, 0 errors`
 
 ## Related
 - [AGENTS](../../../AGENTS.md) — the protocol this log follows

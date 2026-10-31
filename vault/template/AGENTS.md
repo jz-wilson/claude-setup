@@ -46,7 +46,13 @@ Schema: the Agent Log Extension in [_format](_format.md).
 4. **Human gate**: `status: awaiting-approval`; put the decision context in the body.
 5. **Success**: fill `### Verification` under `## Notes` with each check you ran and its result (command → output). Then set `status: completed`, `completion_signal: true`, `verified: false`, and commit. Only a human flips `verified` to `true`.
 
-After writing or updating a log, run `bun scripts/validate-logs.ts` and fix every error.
+After writing or updating a log, run `bun scripts/validate-logs.ts` and fix every error. The `new-agent-log` skill scaffolds a log; `bun scripts/commit-task.ts <log>` commits a finished one.
+
+### Recording facts
+
+- Add a fact to a note with `bun scripts/capture.ts --type <type> [--note <name>] "<fact>"`, not by hand: it bumps `updated:`, creates the note if needed and validates it.
+- Search before asking: `bun scripts/search.ts <terms>` (it never returns `personal/`).
+- `bun scripts/consolidate.ts` lists logs whose facts haven't reached a semantic note yet.
 
 ### Formatting
 

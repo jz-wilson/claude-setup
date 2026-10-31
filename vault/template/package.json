@@ -1,0 +1,17 @@
+{
+  "name": "my-vault",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "bun scripts/validate-logs.ts && bun scripts/validate-vault.ts",
+    "capture": "bun scripts/capture.ts",
+    "consolidate": "bun scripts/consolidate.ts",
+    "index": "bun scripts/index.ts",
+    "search": "bun scripts/search.ts",
+    "dashboard": "bun scripts/dashboard.ts",
+    "stale": "bun scripts/stale-logs.ts",
+    "commit-task": "bun scripts/commit-task.ts",
+    "move": "bun scripts/move-note.ts",
+    "test": "bun test scripts"
+  }
+}

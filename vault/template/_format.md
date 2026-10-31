@@ -76,7 +76,8 @@ date: 2026-10-30       # task date
 completion_signal: true  # agent asserts the task is done; required when completed
 verified: false          # required when completed; only a human flips it to true
 error_class: transient   # transient | permanent; required when status is error
-commits: ["abc1234"]     # SHAs the task produced
+commits: ["abc1234"]     # SHAs the task produced; commit-task.ts appends to it
+files: [projects/x.md]   # vault-relative paths commit-task.ts commits with the log (default: every changed file)
 model: "<model id>"      # model that did the work
 ```
 

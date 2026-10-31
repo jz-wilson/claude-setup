@@ -1,20 +1,46 @@
 #!/usr/bin/env bash
-# Save as .githooks/pre-commit and run once: git config core.hooksPath .githooks
-# Blocks a commit when any staged agent log fails validation. Works with bash 3.2 (macOS).
+# Run once per clone: git config core.hooksPath .githooks
+# Blocks a commit when a staged agent log or note fails validation, or when any note in the
+# vault has a broken relative link; then regenerates index.md for the folders the commit
+# touches and stages it. Works with bash 3.2 (macOS).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 logs=()
+notes=()
+dirs=()
 while IFS= read -r -d '' f; do
   case "$f" in
     agents/*/reports/archive/*) ;;
     agents/*/reports/*.md) logs+=("$f") ;;
+    */index.md | dashboard/* | scripts/* | .claude/* | .agents/*) ;;
+    */*.md)
+      notes+=("$f")
+      dirs+=("${f%%/*}")
+      ;;
   esac
-done < <(git diff --cached --name-only -z --diff-filter=ACM -- agents)
-[ "${#logs[@]}" -eq 0 ] && exit 0
+done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.md')
+
+# Deleted or renamed notes can break links elsewhere, so they also trigger the link check.
+removed=$(git diff --cached --name-only --diff-filter=DR -- '*.md')
+[ "${#logs[@]}" -eq 0 ] && [ "${#notes[@]}" -eq 0 ] && [ -z "$removed" ] && exit 0
 
 if ! command -v bun >/dev/null 2>&1; then
-  echo "pre-commit: bun not found on PATH, so agent logs cannot be validated; commit refused" >&2
+  echo "pre-commit: bun not found on PATH, so notes cannot be validated; commit refused" >&2
   exit 1
 fi
-bun scripts/validate-logs.ts "${logs[@]}"
+
+[ "${#logs[@]}" -gt 0 ] && bun scripts/validate-logs.ts "${logs[@]}"
+[ "${#notes[@]}" -gt 0 ] && bun scripts/validate-vault.ts "${notes[@]}"
+bun scripts/validate-vault.ts --links
+
+if [ "${#dirs[@]}" -gt 0 ]; then
+  # index.ts ignores folders that are not in vault.config.json.
+  uniq_dirs=$(printf '%s\n' "${dirs[@]}" | sort -u)
+  # shellcheck disable=SC2086 # folder names from vault.config.json have no spaces
+  bun scripts/index.ts $uniq_dirs >/dev/null
+  for d in $uniq_dirs; do
+    [ -f "$d/index.md" ] && git add -- "$d/index.md"
+  done
+fi
+exit 0

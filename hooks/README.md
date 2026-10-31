@@ -24,9 +24,15 @@ It parses the command with a small shell scanner, [`scripts/shell-parse.ts`](scr
 
 It fails closed. If the hook input can't be parsed and it mentions a secret CLI, the command is denied.
 
+## read-guard
+
+[`scripts/read-guard.ts`](scripts/read-guard.ts) is a `PreToolUse` hook for `Bash`. It denies reading a local file with `cat`, `head`, `tail` or `sed` and points the agent at its Read tool, which shows line numbers, reads a range (offset and limit) and respects size limits. Agents fall back to `cat` out of habit, and a big file read that way floods the context in one go.
+
+It lets these through, because none of them puts a file in the transcript: output redirected to a file (`cat a > b`), output piped onward (`cat a | grep x`), in-place edits (`sed -i`), following a log (`tail -f`), reads over `ssh`, and the commands reading their stdin (`git log | head -5`). It looks inside `bash -c '…'`, and `cat < file` counts as a read. It uses the same scanner as shell-guard, so `git commit -m "cat README.md"` passes.
+
 ## Wiring
 
-Copy `shell-guard.ts` and `shell-parse.ts` from `scripts/` into `~/.claude/hooks/` (any folder works, as long as both files sit together), then add this to `~/.claude/settings.json`:
+Copy `shell-guard.ts`, `read-guard.ts` and `shell-parse.ts` from `scripts/` into `~/.claude/hooks/` (any folder works, as long as the files sit together), then add this to `~/.claude/settings.json`:
 
 ```json
 {
@@ -34,7 +40,10 @@ Copy `shell-guard.ts` and `shell-parse.ts` from `scripts/` into `~/.claude/hooks
     "PreToolUse": [
       {
         "matcher": "Bash|PowerShell",
-        "hooks": [{ "type": "command", "command": "bun \"$HOME/.claude/hooks/shell-guard.ts\"", "timeout": 10 }]
+        "hooks": [
+          { "type": "command", "command": "bun \"$HOME/.claude/hooks/shell-guard.ts\"", "timeout": 10 },
+          { "type": "command", "command": "bun \"$HOME/.claude/hooks/read-guard.ts\"", "timeout": 10 }
+        ]
       }
     ]
   }
@@ -55,11 +64,11 @@ Then check it end to end. Pipe a fake hook input in and look for the `deny`:
 
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"gh auth token"}}' | bun hooks/scripts/shell-guard.ts
+echo '{"tool_name":"Bash","tool_input":{"command":"cat big.md"}}' | bun hooks/scripts/read-guard.ts
 ```
 
 ## Ideas for more
 
-- **Read guard:** deny `cat`/`head`/`sed` of whole files through the shell and point at the agent's file-read tool, which shows line numbers and respects size limits.
 - **Size guard:** deny reading files above N lines in one go; ask for a targeted range instead.
 - **Web guard:** send fetches of sites that block bots to a tool that handles them.
 - **Review gate:** a `Stop` hook that blocks ending a session that changed code without a review. See [../review/](../review/README.md).

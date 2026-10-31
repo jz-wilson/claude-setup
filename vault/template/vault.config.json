@@ -1,0 +1,12 @@
+{
+  "name": "my-vault",
+  "semantic_dirs": {
+    "infra": "infrastructure",
+    "project": "projects",
+    "personal": "personal"
+  },
+  "episodic_dirs": {
+    "decision": "decisions"
+  },
+  "extra_dirs": []
+}

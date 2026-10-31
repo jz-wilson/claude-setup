@@ -40,3 +40,19 @@ Why `AGENTS.md` and not everything in `CLAUDE.md`: other agent tools read `AGENT
 - **Say what to do, not only what to avoid.** Every "never" should come with the alternative.
 - **Enforce the ones that matter with hooks.** An instruction can be forgotten mid-task; a hook can't. See [../hooks/](../hooks/README.md).
 - **Keep the always-loaded files short.** Put detail in skills or docs that load on demand, and leave a one-line pointer in `AGENTS.md`.
+
+## Skills
+
+A skill is a folder with a `SKILL.md` whose `description` says when to use it. Claude Code always sees the description but loads the body only when a task matches it, so a skill costs almost nothing until it is needed.
+
+Turn an instruction into a skill when:
+
+- **It only matters for one kind of task.** Release steps, a log format or a review checklist don't need to be in context while the agent is fixing a typo.
+- **It has steps, commands or a script.** A numbered procedure, a schema with exact field order or a scaffold script is too long for `AGENTS.md` and too precise to leave to memory.
+- **It keeps being done slightly wrong.** If the agent forgets a field or a step, a skill with the exact commands fixes it more reliably than a stronger-worded rule.
+
+Keep it in `AGENTS.md` when it applies to almost every task, such as how to communicate, when to ask or how to commit.
+
+Example: the vault template's [`new-agent-log`](../vault/template/.claude/skills/new-agent-log/SKILL.md) skill. `AGENTS.md` says only that every task gets a log. The skill holds the exact frontmatter, a scaffold script, and the field sets for completed and failed logs. Its description names the triggers ("start an agent log", beginning any non-trivial task), so it loads at the start of the work, which is when it is needed.
+
+Write the description as the trigger: what the skill does, then "Use when …" with the phrases and situations that should load it. A vague description means a skill that never fires.
