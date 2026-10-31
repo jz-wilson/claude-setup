@@ -1,0 +1,19 @@
+{
+  "name": "claude-setup",
+  "owner": {
+    "name": "jz-wilson"
+  },
+  "metadata": {
+    "description": "Claude Code mods from the claude-setup guides: agent-tree and prompt-refiner"
+  },
+  "plugins": [
+    {
+      "name": "agent-tree",
+      "source": "./mods/agent-tree"
+    },
+    {
+      "name": "prompt-refiner",
+      "source": "./mods/prompt-refiner"
+    }
+  ]
+}

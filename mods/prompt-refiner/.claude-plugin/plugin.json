@@ -1,0 +1,7 @@
+{
+  "name": "prompt-refiner",
+  "version": "0.2.0",
+  "description": "A Refine button under the prompt, any time in the chat: pick a rewrite style (Clearer, Shorter, Elaborate, Structured, Ask me first, My guidance), then use it, refine again, or discard it.",
+  "author": { "name": "jz-wilson", "url": "https://github.com/jz-wilson" },
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,3 @@
+[test]
+# Mod tests need the Claude Code runtime: run them with `claude plugin test <dir>` (see mods/README.md).
+pathIgnorePatterns = ["mods/**"]
